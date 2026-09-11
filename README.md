@@ -1,10 +1,16 @@
-# ⚡ F L U O R I N E ⚡
+```
+ ███████ ██      ██    ██  ██████  ██████  ██ ███    ██ ███████
+ ██      ██      ██    ██ ██    ██ ██   ██ ██ ████   ██ ██
+ █████   ██      ██    ██ ██    ██ ██████  ██ ██ ██  ██ █████
+ ██      ██      ██    ██ ██    ██ ██   ██ ██ ██  ██ ██ ██
+ ██      ███████  ██████   ██████  ██   ██ ██ ██   ████ ███████
+```
 
 A Windows screen-effect prank.
 
-## ⌨️ Press **ESC** to exit — anytime.
+# ⌨️  Press **ESC** to exit — anytime.
 
-That's it. Hit **ESC** and everything goes back to normal.
+Hit **ESC** and everything goes back to normal.
 
 **Safe:** nothing is installed, nothing is damaged.
 
