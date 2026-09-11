@@ -1,24 +1,18 @@
-# Fluorine
+# ⚡ F L U O R I N E ⚡
 
-A **screen prank** for Windows. It scrambles your display and plays bytebeat audio.
+A Windows screen-effect prank.
 
-> ⚠️ **It's a joke program.** It hijacks your screen on purpose. **Press `ESC` to quit** and everything goes back to normal. Nothing is installed and nothing is damaged.
+## ⌨️ Press **ESC** to exit — anytime.
+
+That's it. Hit **ESC** and everything goes back to normal.
+
+**Safe:** nothing is installed, nothing is damaged.
 
 ## Run it
-
-You need Python 3 on Windows.
 
 ```
 pip install pywin32 keyboard
 python fluorine.py
 ```
 
-Then press **ESC** whenever you want it to stop.
-
-## What it does
-
-- Mangles the screen using GDI
-- Plays bytebeat sound
-- Exits cleanly on **ESC**
-
-That's it. Read `fluorine.py` — it's short. Run it only if you actually want the prank.
+Press **ESC** to quit.
