@@ -114,22 +114,84 @@ def audio_bytebeat_engine():
         ctypes.windll.winmm.waveOutReset(HWAVEOUT)
         ctypes.windll.winmm.waveOutClose(HWAVEOUT)
 
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+DWMWA_CLOAKED = 14
+GA_ROOT = 2
+
+class RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long)
+    ]
+
+def _window_frame(hwnd):
+    # GetWindowRect includes the invisible resize border on Win10/11, which puts
+    # the caption buttons several pixels off. The DWM frame bounds are exact.
+    r = RECT()
+    if ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            ctypes.c_void_p(hwnd), DWMWA_EXTENDED_FRAME_BOUNDS,
+            ctypes.byref(r), ctypes.sizeof(r)) == 0:
+        return r.left, r.top, r.right, r.bottom
+    return win32gui.GetWindowRect(hwnd)
+
+def _is_cloaked(hwnd):
+    c = ctypes.c_int(0)
+    if ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            ctypes.c_void_p(hwnd), DWMWA_CLOAKED,
+            ctypes.byref(c), ctypes.sizeof(c)) == 0:
+        return c.value != 0
+    return False
+
+def _window_scale(hwnd):
+    try:
+        return ctypes.windll.user32.GetDpiForWindow(ctypes.c_void_p(hwnd)) / 96.0
+    except Exception:
+        return 1.0
+
 def get_titlebar_buttons_regions(screen_left, screen_top):
+    # Returns screen-local cells covering the minimize/maximize/close group of
+    # every visible top-level window, so the pixelation can be punched out there
+    # and the X stays readable and clickable.
     regions = []
     def enum_windows_callback(hwnd, lParam):
-        if win32gui.IsWindowVisible(hwnd) and not win32gui.IsIconic(hwnd):
-            rect = win32gui.GetWindowRect(hwnd)
-            w_left, w_top, w_right, w_bottom = rect
-            if (w_right - w_left) > 50 and (w_bottom - w_top) > 50:
-                style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
-                if style & win32con.WS_CAPTION:
-                    btn_width = win32api.GetSystemMetrics(win32con.SM_CXSIZE) * 3
-                    btn_height = win32api.GetSystemMetrics(win32con.SM_CYSIZE)
-                    rx1 = w_right - btn_width - screen_left
-                    ry1 = w_top - screen_top + 2
-                    rx2 = w_right - screen_left - 2
-                    ry2 = w_top + btn_height - screen_top + 4
-                    regions.append((rx1, ry1, rx2, ry2))
+        if not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd):
+            return True
+        if _is_cloaked(hwnd):
+            return True
+        style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+        if not (style & win32con.WS_CAPTION):
+            return True
+
+        w_left, w_top, w_right, w_bottom = _window_frame(hwnd)
+        if (w_right - w_left) <= 50 or (w_bottom - w_top) <= 50:
+            return True
+
+        scale = _window_scale(hwnd)
+        # Win11 caption buttons are ~46x32 DIP each; the old SM_CXSIZE metric is
+        # far too narrow and clipped the close button in half.
+        btn_w = max(int(46 * scale), win32api.GetSystemMetrics(win32con.SM_CXSIZE))
+        btn_h = max(int(32 * scale), win32api.GetSystemMetrics(win32con.SM_CYSIZE))
+        pad = max(2, int(2 * scale))
+
+        strip_top = w_top - pad
+        strip_bottom = w_top + btn_h + pad
+        # Walk the three buttons right-to-left and keep only the cells that this
+        # window actually owns on screen, so a window stacked on top of it does
+        # not get a sharp rectangle stamped over it.
+        for n in range(3):
+            cx2 = w_right - (n * btn_w) + pad
+            cx1 = cx2 - btn_w - (pad * 2)
+            probe_x = (cx1 + cx2) // 2
+            probe_y = (strip_top + strip_bottom) // 2
+            hit = win32gui.WindowFromPoint((probe_x, probe_y))
+            if not hit:
+                continue
+            if ctypes.windll.user32.GetAncestor(hit, GA_ROOT) != hwnd:
+                continue
+            regions.append((cx1 - screen_left, strip_top - screen_top,
+                            cx2 - screen_left, strip_bottom - screen_top))
         return True
     win32gui.EnumWindows(enum_windows_callback, 0)
     return regions
@@ -156,6 +218,8 @@ def gdi_animation_loop():
 
     ripple_time = 0.0
     color_cycle = 0.0
+    button_regions = []
+    button_regions_time = 0.0
     start_time = time.time()
 
     while running:
@@ -195,13 +259,24 @@ def gdi_animation_loop():
             win32gui.StretchBlt(hdc_mem, 0, 0, screen_width // pixel_size, screen_height // pixel_size, hdc_live_capture, 0, 0, screen_width, screen_height, win32con.SRCCOPY)
             win32gui.StretchBlt(hdc_screen, screen_left, screen_top, screen_width, screen_height, hdc_mem, 0, 0, screen_width // pixel_size, screen_height // pixel_size, win32con.SRCCOPY)
 
-            # Dynamic exclusion layout masks protect close button groups
-            button_regions = get_titlebar_buttons_regions(screen_left, screen_top)
+            # Dynamic exclusion layout masks protect close button groups.
+            # EnumWindows + DWM queries are not free, so refresh the layout a few
+            # times a second and reuse it for the frames in between.
+            now = time.time()
+            if now - button_regions_time > 0.15:
+                button_regions = get_titlebar_buttons_regions(screen_left, screen_top)
+                button_regions_time = now
             for box in button_regions:
                 bx1, by1, bx2, by2 = box
+                # Clamp to the virtual screen instead of dropping the whole cell,
+                # so a button group hanging off an edge is still restored.
+                bx1 = max(0, min(bx1, screen_width))
+                by1 = max(0, min(by1, screen_height))
+                bx2 = max(0, min(bx2, screen_width))
+                by2 = max(0, min(by2, screen_height))
                 bw = bx2 - bx1
                 bh = by2 - by1
-                if 0 <= bx1 < screen_width and 0 <= by1 < screen_height:
+                if bw > 0 and bh > 0:
                     win32gui.BitBlt(hdc_screen, screen_left + bx1, screen_top + by1, bw, bh, hdc_live_capture, bx1, by1, win32con.SRCCOPY)
 
         elif current_part == 2:
