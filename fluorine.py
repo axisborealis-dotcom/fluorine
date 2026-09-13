@@ -35,83 +35,95 @@ class WAVEHDR(ctypes.Structure):
         ("reserved", ctypes.c_void_p)
     ]
 
-def audio_bytebeat_engine():
-    global running, current_part, reset_audio_time
-    t = 0
-    sample_rate = 8000
-    HWAVEOUT = ctypes.c_void_p()
-    wfx = WAVEFORMATEX(1, 1, sample_rate, sample_rate, 1, 8, 0)
+SAMPLE_RATE = 8000
+PART_SECONDS = 30
+PART_SAMPLES = SAMPLE_RATE * PART_SECONDS
+WHDR_BEGINLOOP = 0x4
+WHDR_ENDLOOP = 0x8
 
+def _i32(x):
+    # JavaScript-style 32-bit signed wrap, so the formulas behave like they do in a bytebeat player
+    x &= 0xFFFFFFFF
+    return x - 0x100000000 if x & 0x80000000 else x
+
+def _jsmod(a, b):
+    # JS % keeps the sign of the dividend; Python's does not
+    r = abs(a) % b
+    return -r if a < 0 else r
+
+def _sample(part, t):
+    if part == 1:
+        return (((t * 9) & (t >> 4)) | (t * 5 & t >> 7) | (t * 3 & (t // 1024))) - 1
+    if part == 2:
+        return _i32(t << 2 ^ t >> 4 ^ t << 4 & t >> 8) | (_i32(t << 1) & (-t >> 4))
+    if part == 3:
+        return ((_i32(t * (t >> 8 | t >> 9)) & 46 & t >> 8)) ^ (t & t >> 13 | t >> 6)
+    if part == 4:
+        s = (t >> 6) & 3
+        return (t >> 6) ^ (t & (t >> 9)) ^ (t >> 12) | _jsmod(_i32(t << s) ^ (-t) & ((-t) >> 13), 128) ^ ((-t) >> 1)
+    if part == 5:
+        return _i32(((t & (t >> 8)) | (t & (t >> 13))) * (1 + ((t >> 14) & 3))) | (t >> 7)
+    x1 = (t * 2) & 0xFFFFFFFF
+    f1 = ((x1 // 8) >> ((((x1 >> 9) * x1) & 0xFFFFFFFF) // (((x1 >> 14) & 3) + 4) & 31)) & 255
+    x2 = (t * 2 + 1) & 0xFFFFFFFF
+    f2 = ((x2 // 8) >> ((((x2 >> 9) * x2) & 0xFFFFFFFF) // (((x2 >> 14) & 3) + 4) & 31)) & 255
+    u = f1 | (f2 << 8)
+    if u & 0x8000:
+        u -= 0x10000
+    return int((u / 32768.0 + 1.0) * 127.5)
+
+# Every part starts its formula at t = 0.
+PART_START_T = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
+
+def render_part(part):
+    t0 = PART_START_T[part]
+    return bytes(_sample(part, t0 + i) & 255 for i in range(PART_SAMPLES))
+
+part_audio = {}
+
+def audio_bytebeat_engine():
+    # The old engine generated samples live in Python and fed winmm with sleep()
+    # timing. With the GDI loop fighting for the GIL, the heavier formulas could
+    # not keep up and played as gaps/crackle. Now every part is rendered ahead of
+    # time and handed to winmm as one looping buffer, so playback is glitch-free.
+    global running
+    HWAVEOUT = ctypes.c_void_p()
+    wfx = WAVEFORMATEX(1, 1, SAMPLE_RATE, SAMPLE_RATE, 1, 8, 0)
     if ctypes.windll.winmm.waveOutOpen(ctypes.byref(HWAVEOUT), -1, ctypes.byref(wfx), 0, 0, 0) != 0:
         return
 
-    chunk_size = 4000
-    buffers = []
+    def prerender():
+        for p in range(2, 7):
+            if not running:
+                return
+            part_audio[p] = render_part(p)
+    threading.Thread(target=prerender, daemon=True).start()
+
+    playing = None
+    whdr = None
     try:
         while running:
-            if reset_audio_time:
-                t = 0
-                reset_audio_time = False
-
-            raw_data = bytearray(chunk_size)
-            for i in range(chunk_size):
-                if current_part == 1:
-                    val = (((t * 9) & (t >> 4)) | (t * 5 & t >> 7) | (t * 3 & int(t / 1024))) - 1
-                elif current_part == 2:
-                    val = (t << 2 ^ t >> 4 ^ t << 4 & t >> 8) | (t << 1 & -t >> 4)
-                elif current_part == 3:
-                    val = ((t * (t >> 8 | t >> 9) & 46 & t >> 8)) ^ (t & t >> 13 | t >> 6)
-                elif current_part == 4:
-                    shift_amt = (t >> 6) & 3
-                    val = (t >> 6) ^ (t & (t >> 9)) ^ (t >> 12) | ((t << shift_amt ^ (-t) & ((-t) >> 13)) % 128) ^ ((-t) >> 1)
-                elif current_part == 5:
-                    val = ((t & (t >> 8)) | (t & (t >> 13))) * (1 + ((t >> 14) & 3)) | (t >> 7)
-                else:
-                    # FIX: Enforcing strict 32-bit register masking to stop execution crashes
-                    x1 = (t * 2) & 0xFFFFFFFF
-                    denom1 = (((x1 >> 14) & 3) + 4)
-                    num1 = ((x1 >> 9) * x1) & 0xFFFFFFFF
-                    div1 = (num1 // denom1) if denom1 != 0 else 0
-                    f1 = (int(x1 / 8) >> (div1 & 31)) & 255
-
-                    x2 = (t * 2 + 1) & 0xFFFFFFFF
-                    denom2 = (((x2 >> 14) & 3) + 4)
-                    num2 = ((x2 >> 9) * x2) & 0xFFFFFFFF
-                    div2 = (num2 // denom2) if denom2 != 0 else 0
-                    f2 = (int(x2 / 8) >> (div2 & 31)) & 255
-
-                    u = (f1 | (f2 << 8)) & 0xFFFF
-
-                    # Manual bitwise short signed casting
-                    if u & 0x8000:
-                        signed_u = u - 0x10000
-                    else:
-                        signed_u = u
-
-                    sample_float = signed_u / 32768.0
-                    val = int((sample_float + 1.0) * 127.5)
-
-                raw_data[i] = int(val) & 255
-                t = (t + 1) & 0xFFFFFFFF
-
-            raw_bytes = bytes(raw_data)
-            whdr = WAVEHDR()
-            whdr.lpData = ctypes.c_char_p(raw_bytes)
-            whdr.dwBufferLength = chunk_size
-
-            buffers.append((raw_bytes, whdr))
-            ctypes.windll.winmm.waveOutPrepareHeader(HWAVEOUT, ctypes.byref(whdr), ctypes.sizeof(WAVEHDR))
-            ctypes.windll.winmm.waveOutWrite(HWAVEOUT, ctypes.byref(whdr), ctypes.sizeof(WAVEHDR))
-
-            if len(buffers) > 8:
-                old_bytes, old_hdr = buffers.pop(0)
-                ctypes.windll.winmm.waveOutUnprepareHeader(HWAVEOUT, ctypes.byref(old_hdr), ctypes.sizeof(WAVEHDR))
-
-            time.sleep(chunk_size / sample_rate - 0.02)
+            part = current_part
+            if part != playing and part in part_audio:
+                ctypes.windll.winmm.waveOutReset(HWAVEOUT)
+                if whdr is not None:
+                    ctypes.windll.winmm.waveOutUnprepareHeader(HWAVEOUT, ctypes.byref(whdr), ctypes.sizeof(WAVEHDR))
+                data = part_audio[part]
+                whdr = WAVEHDR()
+                whdr.lpData = ctypes.c_char_p(data)
+                whdr.dwBufferLength = len(data)
+                whdr.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP
+                whdr.dwLoops = 0xFFFFFFFF
+                ctypes.windll.winmm.waveOutPrepareHeader(HWAVEOUT, ctypes.byref(whdr), ctypes.sizeof(WAVEHDR))
+                ctypes.windll.winmm.waveOutWrite(HWAVEOUT, ctypes.byref(whdr), ctypes.sizeof(WAVEHDR))
+                playing = part
+            time.sleep(0.01)
     except Exception:
         pass
     finally:
         ctypes.windll.winmm.waveOutReset(HWAVEOUT)
+        if whdr is not None:
+            ctypes.windll.winmm.waveOutUnprepareHeader(HWAVEOUT, ctypes.byref(whdr), ctypes.sizeof(WAVEHDR))
         ctypes.windll.winmm.waveOutClose(HWAVEOUT)
 
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
@@ -242,7 +254,7 @@ def gdi_animation_loop():
             reset_audio_time = True
         elif current_part == 4 and elapsed_time >= 120.0:
             current_part = 5
-            reset_audio_time = False
+            reset_audio_time = True
         elif current_part == 5 and elapsed_time >= 150.0:
             current_part = 6
             reset_audio_time = True
@@ -359,6 +371,7 @@ def gdi_animation_loop():
     win32gui.ReleaseDC(0, hdc_screen)
 
 if __name__ == "__main__":
+    part_audio[1] = render_part(1)
     audio_thread = threading.Thread(target=audio_bytebeat_engine, daemon=True)
     audio_thread.start()
     try:
