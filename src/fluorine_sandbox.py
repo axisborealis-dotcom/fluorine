@@ -140,7 +140,7 @@ def cursor_seizure_loop():
         # If the cursor is somewhere we didn't put it, the user moved it: follow.
         if (cx, cy) != last:
             ax, ay = cx, cy
-        jitter = 90 if random.randint(1, 6) > 1 else 180
+        jitter = 20 if random.randint(1, 6) > 1 else 40
         jx = int(ax + random.randint(-jitter, jitter))
         jy = int(ay + random.randint(-jitter, jitter))
         jx = max(sl, min(jx, sl + sw - 1))
