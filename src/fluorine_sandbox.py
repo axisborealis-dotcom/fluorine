@@ -133,18 +133,10 @@ def cursor_seizure_loop():
     st = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
     sw = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN)
     sh = win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN)
-    x, y = win32api.GetCursorPos()
-    x, y = float(x), float(y)
-    tx, ty = x, y
     while running:
-        # Gentle drift: only a little wander toward the target.
-        if abs(tx - x) < 20 and abs(ty - y) < 20 or random.randint(1, 400) == 1:
-            tx = random.randint(sl, sl + sw - 1)
-            ty = random.randint(st, st + sh - 1)
-        x += (tx - x) * 0.012 + random.uniform(-1.0, 1.0)
-        y += (ty - y) * 0.012 + random.uniform(-1.0, 1.0)
-        # Massive seizure: huge jitter slammed around the drift point every frame.
-        jitter = 160 if random.randint(1, 6) > 1 else 350
+        # No wandering: seize violently around wherever the cursor currently is.
+        x, y = win32api.GetCursorPos()
+        jitter = 200 if random.randint(1, 6) > 1 else 400
         jx = int(x + random.randint(-jitter, jitter))
         jy = int(y + random.randint(-jitter, jitter))
         jx = max(sl, min(jx, sl + sw - 1))
