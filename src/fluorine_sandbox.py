@@ -150,7 +150,7 @@ def cursor_seizure_loop():
         except Exception:
             pass
         last = (jx, jy)
-        time.sleep(0.005)
+        time.sleep(0.03)
 
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
 DWMWA_CLOAKED = 14
