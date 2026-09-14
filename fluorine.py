@@ -133,18 +133,23 @@ def cursor_seizure_loop():
     st = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
     sw = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN)
     sh = win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN)
+    ax, ay = win32api.GetCursorPos()   # anchor: seize around this, no drift
+    last = (ax, ay)
     while running:
-        # No wandering: seize violently around wherever the cursor currently is.
-        x, y = win32api.GetCursorPos()
+        cx, cy = win32api.GetCursorPos()
+        # If the cursor is somewhere we didn't put it, the user moved it: follow.
+        if (cx, cy) != last:
+            ax, ay = cx, cy
         jitter = 200 if random.randint(1, 6) > 1 else 400
-        jx = int(x + random.randint(-jitter, jitter))
-        jy = int(y + random.randint(-jitter, jitter))
+        jx = int(ax + random.randint(-jitter, jitter))
+        jy = int(ay + random.randint(-jitter, jitter))
         jx = max(sl, min(jx, sl + sw - 1))
         jy = max(st, min(jy, st + sh - 1))
         try:
             win32api.SetCursorPos((jx, jy))
         except Exception:
             pass
+        last = (jx, jy)
         time.sleep(0.005)
 
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
