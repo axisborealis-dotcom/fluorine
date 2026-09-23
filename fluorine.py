@@ -3,6 +3,7 @@ import math
 import random
 import threading
 import ctypes
+import ctypes.wintypes
 import win32gui
 import win32con
 import win32api
@@ -152,6 +153,7 @@ def cursor_seizure_loop():
         last = (jx, jy)
         time.sleep(0.03)
 
+X_SIZE = 32          # size of the spawned X icon; try 48 or 64
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
 DWMWA_CLOAKED = 14
 GA_ROOT = 2
@@ -237,7 +239,14 @@ def get_titlebar_buttons_regions(screen_left, screen_top):
 def gdi_animation_loop():
     global running, current_part, reset_audio_time
     hdc_screen = win32gui.GetDC(0)
-    h_icon = win32gui.LoadIcon(0, win32con.IDI_HAND)
+    # X spawn: the real system red-circle X, loaded at X_SIZE with per-pixel alpha
+    h_icon = ctypes.windll.user32.LoadImageW(None, ctypes.wintypes.LPCWSTR(32513),
+                                             1, X_SIZE, X_SIZE, 0x8000)
+
+    def draw_x(hdc, cx, cy):
+        win32gui.DrawIconEx(hdc, cx - X_SIZE // 2, cy - X_SIZE // 2, h_icon,
+                            X_SIZE, X_SIZE, 0, 0, win32con.DI_NORMAL)
+
 
     screen_left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
     screen_top = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
@@ -291,7 +300,7 @@ def gdi_animation_loop():
 
         if current_part == 1:
             win32gui.BitBlt(hdc_live_capture, 0, 0, screen_width, screen_height, hdc_screen, screen_left, screen_top, win32con.SRCCOPY)
-            win32gui.DrawIconEx(hdc_live_capture, mx_local - 16, my_local - 16, h_icon, 32, 32, 0, 0, win32con.DI_NORMAL)
+            draw_x(hdc_live_capture, mx_local, my_local)
 
             pixel_size = 4
             win32gui.StretchBlt(hdc_mem, 0, 0, screen_width // pixel_size, screen_height // pixel_size, hdc_live_capture, 0, 0, screen_width, screen_height, win32con.SRCCOPY)
@@ -318,7 +327,7 @@ def gdi_animation_loop():
                     win32gui.BitBlt(hdc_screen, screen_left + bx1, screen_top + by1, bw, bh, hdc_live_capture, bx1, by1, win32con.SRCCOPY)
 
         elif current_part == 2:
-            win32gui.DrawIconEx(hdc_mem, mx_local - 16, my_local - 16, h_icon, 32, 32, 0, 0, win32con.DI_NORMAL)
+            draw_x(hdc_mem, mx_local, my_local)
             if random.randint(1, 40) == 1:
                 ix = random.randint(0, screen_width - 250)
                 iy = random.randint(0, screen_height - 250)
@@ -330,7 +339,7 @@ def gdi_animation_loop():
                 win32gui.BitBlt(hdc_screen, screen_left + x, screen_top + y_offset, slice_w, screen_height, hdc_mem, x, 0, win32con.SRCCOPY)
 
         elif current_part == 3:
-            win32gui.DrawIconEx(hdc_mem, mx_local - 16, my_local - 16, h_icon, 32, 32, 0, 0, win32con.DI_NORMAL)
+            draw_x(hdc_mem, mx_local, my_local)
             for _ in range(3):
                 block_w = random.randint(100, 400)
                 block_h = random.randint(50, 150)
@@ -346,7 +355,7 @@ def gdi_animation_loop():
             win32gui.BitBlt(hdc_screen, screen_left, screen_top, screen_width, screen_height, hdc_mem, 0, 0, win32con.SRCCOPY)
 
         elif current_part == 4:
-            win32gui.DrawIconEx(hdc_mem, mx_local - 16, my_local - 16, h_icon, 32, 32, 0, 0, win32con.DI_NORMAL)
+            draw_x(hdc_mem, mx_local, my_local)
             slice_h = 16
             for y in range(0, screen_height, slice_h):
                 shift_r = int(math.sin(y / 30.0 + time.time() * 5) * 12)
@@ -359,7 +368,7 @@ def gdi_animation_loop():
 
         elif current_part == 5:
             win32gui.BitBlt(hdc_mem, 0, 0, screen_width, screen_height, hdc_screen, screen_left, screen_top, win32con.SRCCOPY)
-            win32gui.DrawIconEx(hdc_mem, mx_local - 16, my_local - 16, h_icon, 32, 32, 0, 0, win32con.DI_NORMAL)
+            draw_x(hdc_mem, mx_local, my_local)
             color_cycle += 0.03
             r = int((math.sin(color_cycle + 0) * 127) + 128)
             g = int((math.sin(color_cycle + 2) * 127) + 128)
@@ -373,7 +382,7 @@ def gdi_animation_loop():
 
         else:
             win32gui.BitBlt(hdc_mem, 0, 0, screen_width, screen_height, hdc_screen, screen_left, screen_top, win32con.SRCCOPY)
-            win32gui.DrawIconEx(hdc_mem, mx_local - 16, my_local - 16, h_icon, 32, 32, 0, 0, win32con.DI_NORMAL)
+            draw_x(hdc_mem, mx_local, my_local)
 
             fr = random.randint(0, 255)
             fg = random.randint(0, 255)
