@@ -32,6 +32,22 @@ def _set_dpi_aware():
     except Exception:
         pass
 
+def _prank_prompt():
+    # Joke fake-out before the melt: two Yes/No scares. Only clicking "Yes"
+    # through both actually starts Fluorine; anything else quietly exits.
+    MB_YESNO = 0x4
+    MB_ICONEXCLAMATION = 0x30
+    MB_TOPMOST = 0x40000
+    IDYES = 6
+    flags = MB_YESNO | MB_ICONEXCLAMATION | MB_TOPMOST
+    mb = ctypes.windll.user32.MessageBoxW
+    if mb(0, "Run malware?", "Fluorine by Index", flags) != IDYES:
+        return False
+    if mb(0, "are you sure? this will destroy your computer.",
+          "LAST WARNING", flags) != IDYES:
+        return False
+    return True
+
 running = True
 current_part = 1
 reset_audio_time = False
@@ -454,6 +470,8 @@ def gdi_animation_loop():
 
 if __name__ == "__main__":
     _set_dpi_aware()
+    if not _prank_prompt():
+        raise SystemExit
     part_audio[1] = render_part(1)
     audio_thread = threading.Thread(target=audio_bytebeat_engine, daemon=True)
     audio_thread.start()
