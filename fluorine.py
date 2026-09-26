@@ -174,8 +174,9 @@ def audio_bytebeat_engine():
         ctypes.windll.winmm.waveOutClose(HWAVEOUT)
 
 def cursor_seizure_loop():
-    # Hijacks the mouse: the cursor wanders toward random spots on the virtual
-    # screen while violently jittering around its path. ESC still ends it all.
+    # Hijacks the mouse: violently jitters the cursor in place around a fixed
+    # anchor, so it shakes but does not drift. The anchor only moves if YOU
+    # physically move the mouse well past the jitter range. ESC still ends it.
     sl = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
     st = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
     sw = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN)
@@ -184,8 +185,10 @@ def cursor_seizure_loop():
     last = (ax, ay)
     while running:
         cx, cy = win32api.GetCursorPos()
-        # If the cursor is somewhere we didn't put it, the user moved it: follow.
-        if (cx, cy) != last:
+        # Re-anchor only on a real move. A small delta is just our own jitter
+        # (or OS pixel rounding) read back; following it would make the cursor
+        # wander off instead of shaking in place.
+        if abs(cx - last[0]) > 60 or abs(cy - last[1]) > 60:
             ax, ay = cx, cy
         jitter = 20 if random.randint(1, 6) > 1 else 40
         jx = int(ax + random.randint(-jitter, jitter))
