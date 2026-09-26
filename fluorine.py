@@ -8,6 +8,7 @@ import win32gui
 import win32con
 import win32api
 import keyboard
+import subprocess
 
 def _set_dpi_aware():
     # Without this, Windows lies to a scaled display (e.g. 150% on a laptop):
@@ -33,20 +34,26 @@ def _set_dpi_aware():
         pass
 
 def _prank_prompt():
-    # Joke fake-out before the melt: two Yes/No scares. Only clicking "Yes"
-    # through both actually starts Fluorine; anything else quietly exits.
-    MB_YESNO = 0x4
-    MB_ICONEXCLAMATION = 0x30
-    MB_TOPMOST = 0x40000
-    IDYES = 6
-    flags = MB_YESNO | MB_ICONEXCLAMATION | MB_TOPMOST
-    mb = ctypes.windll.user32.MessageBoxW
-    if mb(0, "Run malware?", "Fluorine by Index", flags) != IDYES:
+    # Joke fake-out before the melt: two Yes/No scares. Shown via PowerShell's
+    # WinForms MessageBox (nicer warning icon than the raw Win32 one). Only
+    # clicking "Yes" through both prints RUN, so the melt starts; anything else
+    # exits quietly.
+    ps = (
+        "[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms');"
+        "$r=[System.Windows.Forms.MessageBox]::Show('Run malware?','Fluorine by Index',4,48);"
+        "if($r -eq 'Yes'){"
+        "$r2=[System.Windows.Forms.MessageBox]::Show("
+        "'are you sure? this will destroy your computer.','LAST WARNING',4,48);"
+        "if($r2 -eq 'Yes'){Write-Output 'RUN'}}"
+    )
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
+            capture_output=True, text=True, creationflags=0x08000000,  # CREATE_NO_WINDOW
+        ).stdout
+    except Exception:
         return False
-    if mb(0, "are you sure? this will destroy your computer.",
-          "LAST WARNING", flags) != IDYES:
-        return False
-    return True
+    return "RUN" in out
 
 running = True
 current_part = 1
