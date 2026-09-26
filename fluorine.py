@@ -9,6 +9,29 @@ import win32con
 import win32api
 import keyboard
 
+def _set_dpi_aware():
+    # Without this, Windows lies to a scaled display (e.g. 150% on a laptop):
+    # GetSystemMetrics returns virtualized "logical" pixels, so the virtual
+    # screen comes back smaller than it really is and the melt only covers part
+    # of the screen. Declaring per-monitor DPI awareness makes every metric and
+    # BitBlt use real physical pixels, so the effect fills the whole screen and
+    # the cursor position is reported correctly. Must run before any DC/metrics.
+    try:
+        # -4 = PER_MONITOR_AWARE_V2 (Win10 1703+); best coverage across monitors.
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except Exception:
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)   # PER_MONITOR_AWARE
+        return
+    except Exception:
+        pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()         # system-DPI aware
+    except Exception:
+        pass
+
 running = True
 current_part = 1
 reset_audio_time = False
@@ -239,13 +262,37 @@ def get_titlebar_buttons_regions(screen_left, screen_top):
 def gdi_animation_loop():
     global running, current_part, reset_audio_time
     hdc_screen = win32gui.GetDC(0)
-    # X spawn: the real system red-circle X, loaded at X_SIZE with per-pixel alpha
-    h_icon = ctypes.windll.user32.LoadImageW(None, ctypes.wintypes.LPCWSTR(32513),
-                                             1, X_SIZE, X_SIZE, 0x8000)
+    # X spawn: the real system red-circle X (IDI_ERROR = 32513). Load it as a
+    # SHARED icon at its native size and let DrawIconEx stretch to X_SIZE.
+    # LoadImageW with LR_SHARED returns NULL for a non-standard size, so asking
+    # for a 48/64px icon that way gave no X at all; LoadIconW never has that
+    # problem and always returns a valid handle.
+    h_icon = ctypes.windll.user32.LoadIconW(None, ctypes.wintypes.LPCWSTR(32513))
 
     def draw_x(hdc, cx, cy):
-        win32gui.DrawIconEx(hdc, cx - X_SIZE // 2, cy - X_SIZE // 2, h_icon,
-                            X_SIZE, X_SIZE, 0, 0, win32con.DI_NORMAL)
+        x0, y0 = cx - X_SIZE // 2, cy - X_SIZE // 2
+        if h_icon:
+            win32gui.DrawIconEx(hdc, x0, y0, h_icon,
+                                X_SIZE, X_SIZE, 0, 0, win32con.DI_NORMAL)
+            return
+        # Fallback: draw a red circle with a white X by hand, so there is always
+        # an X on the mouse even if the system icon cannot be loaded.
+        r = X_SIZE // 2
+        brush = win32gui.CreateSolidBrush(win32api.RGB(220, 30, 30))
+        pen = win32gui.CreatePen(win32con.PS_SOLID, max(2, X_SIZE // 8),
+                                 win32api.RGB(255, 255, 255))
+        ob = win32gui.SelectObject(hdc, brush)
+        op = win32gui.SelectObject(hdc, pen)
+        win32gui.Ellipse(hdc, cx - r, cy - r, cx + r, cy + r)
+        inset = int(r * 0.45)
+        win32gui.MoveToEx(hdc, cx - inset, cy - inset)
+        win32gui.LineTo(hdc, cx + inset, cy + inset)
+        win32gui.MoveToEx(hdc, cx + inset, cy - inset)
+        win32gui.LineTo(hdc, cx - inset, cy + inset)
+        win32gui.SelectObject(hdc, ob)
+        win32gui.SelectObject(hdc, op)
+        win32gui.DeleteObject(brush)
+        win32gui.DeleteObject(pen)
 
 
     screen_left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
@@ -406,6 +453,7 @@ def gdi_animation_loop():
     win32gui.ReleaseDC(0, hdc_screen)
 
 if __name__ == "__main__":
+    _set_dpi_aware()
     part_audio[1] = render_part(1)
     audio_thread = threading.Thread(target=audio_bytebeat_engine, daemon=True)
     audio_thread.start()
